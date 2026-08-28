@@ -1,0 +1,562 @@
+{
+  "name": "Freight AI - WhatsApp Trip Creation (Text Path)",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "whatsapp-trigger",
+      "name": "WhatsApp Trigger",
+      "type": "n8n-nodes-base.whatsAppTrigger",
+      "typeVersion": 1,
+      "position": [
+        240,
+        300
+      ],
+      "notes": "Credential: WhatsApp TRIGGER (OAuth2) — App ID + App Secret. NOT the same as Send credential."
+    },
+    {
+      "parameters": {
+        "jsCode": "const msg = $input.first().json;\n\n// n8n WhatsApp Trigger already unwraps Meta webhook to value-level fields.\n// Also support raw Meta webhook shape: entry[0].changes[0].value\nconst value =\n  msg.messages || msg.contacts || msg.metadata\n    ? msg\n    : msg.entry?.[0]?.changes?.[0]?.value || msg;\n\nconst message = (value.messages || [])[0] || {};\nconst interactive = message.interactive || {};\nconst buttonId =\n  interactive.button_reply?.id ||\n  interactive.list_reply?.id ||\n  null;\n\nconst text =\n  message.text?.body ||\n  (typeof message.text === 'string' ? message.text : null) ||\n  null;\n\nconst interactiveReply = buttonId ? String(buttonId).toUpperCase() : null;\n\nlet route = 'TEXT';\nif (interactiveReply === 'CREATE') route = 'CREATE';\nelse if (interactiveReply === 'CANCEL') route = 'CANCEL';\nelse if (interactiveReply === 'EDIT') route = 'EDIT';\nelse if (interactiveReply) route = 'OTHER_BUTTON';\n\nreturn [{\n  json: {\n    sender_phone: message.from || null,\n    message_id: message.id || null,\n    message_type: message.type || null,\n    text,\n    timestamp: message.timestamp || null,\n    interactive_reply: interactiveReply,\n    route,\n  },\n}];"
+      },
+      "id": "normalize",
+      "name": "Normalize Incoming Message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        460,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "is-interactive",
+              "leftValue": "={{ $json.interactive_reply }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-interactive",
+      "name": "IF Interactive Reply",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        680,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://49b2-103-248-87-67.ngrok-free.app/v1/extract-trip-intent",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "ngrok-skip-browser-warning",
+              "value": "true"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ text: $json.text, timezone: 'Asia/Kolkata' }) }}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "extract-intent",
+      "name": "Extract Trip Intent",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        900,
+        180
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://49b2-103-248-87-67.ngrok-free.app/v1/trip-drafts",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "ngrok-skip-browser-warning",
+              "value": "true"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  sender_phone: $('Normalize Incoming Message').item.json.sender_phone,\n  source_message_id: $('Normalize Incoming Message').item.json.message_id,\n  raw_text: $('Normalize Incoming Message').item.json.text,\n  extraction: $json\n}) }}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "create-draft",
+      "name": "POST Trip Draft",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1120,
+        180
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "is-missing",
+              "leftValue": "={{ $json.status }}",
+              "rightValue": "MISSING_INFO",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-missing",
+      "name": "IF Missing Info",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1340,
+        180
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "send",
+        "phoneNumberId": "1256431730893371",
+        "recipientPhoneNumber": "={{ $('Normalize Incoming Message').item.json.sender_phone }}",
+        "textBody": "={{ $json.next_question }}"
+      },
+      "id": "ask-missing",
+      "name": "Ask Missing Field",
+      "type": "n8n-nodes-base.whatsApp",
+      "typeVersion": 1,
+      "position": [
+        1560,
+        80
+      ],
+      "notes": "Credential: WhatsApp Business Cloud API (Access Token + Business Account ID)"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://graph.facebook.com/v21.0/1256431730893371/messages",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "whatsAppApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  messaging_product: 'whatsapp',\n  to: String($('Normalize Incoming Message').item.json.sender_phone || '').replace(/^\\+/, ''),\n  type: 'interactive',\n  interactive: {\n    type: 'button',\n    body: { text: String($json.confirmation_summary || 'Trip draft ready. Confirm karein.').slice(0, 1024) },\n    action: {\n      buttons: [\n        { type: 'reply', reply: { id: 'CREATE', title: 'CREATE' } },\n        { type: 'reply', reply: { id: 'EDIT', title: 'EDIT' } },\n        { type: 'reply', reply: { id: 'CANCEL', title: 'CANCEL' } }\n      ]\n    }\n  }\n}) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "send-confirmation",
+      "name": "Send Confirmation Buttons",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1560,
+        280
+      ],
+      "notes": "n8n WhatsApp node cannot send reply buttons. Uses Meta Graph API interactive buttons. Credential: WhatsApp Business Cloud API (same Access Token)."
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "route-create",
+                    "leftValue": "={{ $json.route }}",
+                    "rightValue": "CREATE",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "CREATE"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "route-cancel",
+                    "leftValue": "={{ $json.route }}",
+                    "rightValue": "CANCEL",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "CANCEL"
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra"
+        }
+      },
+      "id": "route-action",
+      "name": "Route CREATE/CANCEL",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        900,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://49b2-103-248-87-67.ngrok-free.app/v1/trip-drafts/open?sender_phone={{ $json.sender_phone }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "ngrok-skip-browser-warning",
+              "value": "true"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "resolve-draft-create",
+      "name": "Resolve Open Draft (CREATE)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1120,
+        360
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://49b2-103-248-87-67.ngrok-free.app/v1/trip-drafts/open?sender_phone={{ $json.sender_phone }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "ngrok-skip-browser-warning",
+              "value": "true"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "resolve-draft-cancel",
+      "name": "Resolve Open Draft (CANCEL)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1120,
+        520
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://49b2-103-248-87-67.ngrok-free.app/v1/trip-drafts/{{ $json.draft_id }}/confirm",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "ngrok-skip-browser-warning",
+              "value": "true"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  sender_phone: $('Normalize Incoming Message').item.json.sender_phone,\n  source_message_id: $('Normalize Incoming Message').item.json.message_id\n}) }}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "confirm-draft",
+      "name": "Confirm Draft",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1340,
+        360
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://49b2-103-248-87-67.ngrok-free.app/v1/trip-drafts/{{ $json.draft_id }}/cancel",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "ngrok-skip-browser-warning",
+              "value": "true"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  sender_phone: $('Normalize Incoming Message').item.json.sender_phone,\n  source_message_id: $('Normalize Incoming Message').item.json.message_id\n}) }}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "cancel-draft",
+      "name": "Cancel Draft",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1340,
+        520
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "send",
+        "phoneNumberId": "1256431730893371",
+        "recipientPhoneNumber": "={{ $('Normalize Incoming Message').item.json.sender_phone }}",
+        "textBody": "={{ $json.summary || ('Trip #' + $json.trip_id + ' created') }}"
+      },
+      "id": "send-created",
+      "name": "Send Trip Created",
+      "type": "n8n-nodes-base.whatsApp",
+      "typeVersion": 1,
+      "position": [
+        1560,
+        360
+      ],
+      "notes": "Credential: WhatsApp Business Cloud API"
+    },
+    {
+      "parameters": {
+        "operation": "send",
+        "phoneNumberId": "1256431730893371",
+        "recipientPhoneNumber": "={{ $('Normalize Incoming Message').item.json.sender_phone }}",
+        "textBody": "={{ 'Draft #D-' + $json.draft_id + ' cancel ho gaya.' }}"
+      },
+      "id": "send-cancelled",
+      "name": "Send Cancelled",
+      "type": "n8n-nodes-base.whatsApp",
+      "typeVersion": 1,
+      "position": [
+        1560,
+        520
+      ],
+      "notes": "Credential: WhatsApp Business Cloud API"
+    }
+  ],
+  "connections": {
+    "WhatsApp Trigger": {
+      "main": [
+        [
+          {
+            "node": "Normalize Incoming Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Incoming Message": {
+      "main": [
+        [
+          {
+            "node": "IF Interactive Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF Interactive Reply": {
+      "main": [
+        [
+          {
+            "node": "Route CREATE/CANCEL",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Extract Trip Intent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Trip Intent": {
+      "main": [
+        [
+          {
+            "node": "POST Trip Draft",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "POST Trip Draft": {
+      "main": [
+        [
+          {
+            "node": "IF Missing Info",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF Missing Info": {
+      "main": [
+        [
+          {
+            "node": "Ask Missing Field",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Confirmation Buttons",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route CREATE/CANCEL": {
+      "main": [
+        [
+          {
+            "node": "Resolve Open Draft (CREATE)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Resolve Open Draft (CANCEL)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Resolve Open Draft (CREATE)": {
+      "main": [
+        [
+          {
+            "node": "Confirm Draft",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Resolve Open Draft (CANCEL)": {
+      "main": [
+        [
+          {
+            "node": "Cancel Draft",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Confirm Draft": {
+      "main": [
+        [
+          {
+            "node": "Send Trip Created",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cancel Draft": {
+      "main": [
+        [
+          {
+            "node": "Send Cancelled",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "meta": {
+    "description": "n8n Cloud path via ngrok only (no Cloudflare). Base: https://49b2-103-248-87-67.ngrok-free.app — update after every ngrok restart."
+  }
+}
