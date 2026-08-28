@@ -194,3 +194,4 @@ async def test_webhook_audio_failed_replies(client: AsyncClient):
     mock_client.send_text.assert_awaited()
     body = mock_client.send_text.await_args.args[1]
     assert "Voice note" in body or "voice" in body.lower()
+    assert "samajh nahi aaya" in body.lower()
