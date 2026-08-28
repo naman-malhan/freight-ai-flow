@@ -148,7 +148,8 @@ docker compose down
 
 - **Required fields** are per-company in `companies.required_fields_config` (vehicle/driver optional by default)
 - **LLM:** Set `OPENAI_API_KEY` in `.env` for production extraction; falls back to rule-based parser without it
-- **Voice STT:** set `GROQ_API_KEY` (model default `whisper-large-v3-turbo`); WhatsApp OGG is sent directly (no conversion).
+- **Voice STT (primary):** local open-source `faster-whisper` (`FASTER_WHISPER_MODEL=large-v3`, CPU `int8`). First run downloads the model (~3GB).
+- **Voice STT (fallback):** set `GROQ_API_KEY` for cloud `whisper-large-v3-turbo` if local STT fails. WhatsApp OGG is used directly (no ffmpeg conversion step in app code; Docker image includes ffmpeg for decoding).
 - **Timezone:** `Asia/Kolkata` for relative dates (`kal`, `aaj`)
 
 ## What You Need to Provide
@@ -168,7 +169,7 @@ docker compose down
 - [x] CREATE / EDIT(correct) / CANCEL
 - [x] n8n workflow template (text path)
 - [ ] WhatsApp Business connection (requires your Meta credentials)
-- [x] Voice note path (Groq whisper-large-v3-turbo on FastAPI webhook)
+- [x] Voice note path (local faster-whisper `large-v3` primary + Groq fallback)
 - [ ] n8n voice note sub-workflow (deferred)
 
 ## Edge Cases Handled

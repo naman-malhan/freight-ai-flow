@@ -10,6 +10,14 @@ class Settings(BaseSettings):
     draft_expiry_hours: int = 24
     openai_api_key: str | None = None
     llm_model: str = "gpt-4o-mini"
+
+    # Primary STT: local faster-whisper (free / open-source)
+    faster_whisper_enabled: bool = True
+    faster_whisper_model: str = "large-v3"
+    faster_whisper_device: str = "cpu"
+    faster_whisper_compute_type: str = "int8"
+
+    # Fallback STT: Groq cloud
     groq_api_key: str | None = None
     groq_stt_model: str = "whisper-large-v3-turbo"
 

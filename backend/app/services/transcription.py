@@ -1,6 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 import logging
+import tempfile
+import threading
+from pathlib import Path
+from typing import Any
 
 import httpx
 
@@ -16,6 +21,9 @@ LOGISTICS_STT_PROMPT = (
     "Dharuhera, Mundra, ICD, 32-feet, 14 tyre, "
     "vehicle numbers like HR55AB1234, freight amounts in rupees."
 )
+
+_model_lock = threading.Lock()
+_whisper_model: Any | None = None
 
 
 def mime_to_suffix(mime_type: str) -> str:
@@ -33,22 +41,87 @@ def mime_to_suffix(mime_type: str) -> str:
     return ".ogg"
 
 
-async def transcribe_whatsapp_audio(
-    *,
-    content: bytes,
-    mime_type: str,
-    filename: str | None = None,
-) -> str | None:
-    if not settings.groq_api_key:
-        logger.warning("GROQ_API_KEY missing; cannot transcribe audio")
+def _get_whisper_model() -> Any:
+    """Lazy-load faster-whisper model (heavy; once per process)."""
+    global _whisper_model
+    if _whisper_model is not None:
+        return _whisper_model
+    with _model_lock:
+        if _whisper_model is not None:
+            return _whisper_model
+        from faster_whisper import WhisperModel
+
+        device = settings.faster_whisper_device
+        compute_type = settings.faster_whisper_compute_type
+        model_size = settings.faster_whisper_model
+        logger.info(
+            "Loading faster-whisper model=%s device=%s compute_type=%s",
+            model_size,
+            device,
+            compute_type,
+        )
+        _whisper_model = WhisperModel(
+            model_size,
+            device=device,
+            compute_type=compute_type,
+        )
+        return _whisper_model
+
+
+def _transcribe_local_sync(path: str) -> str | None:
+    model = _get_whisper_model()
+    segments, _info = model.transcribe(
+        path,
+        language="hi",
+        initial_prompt=LOGISTICS_STT_PROMPT,
+        vad_filter=True,
+    )
+    text = "".join(segment.text for segment in segments).strip()
+    return text or None
+
+
+async def _transcribe_local(*, content: bytes, suffix: str) -> str | None:
+    if not settings.faster_whisper_enabled:
+        logger.info("Local faster-whisper disabled via FASTER_WHISPER_ENABLED")
         return None
     if not content:
         return None
 
-    suffix = mime_to_suffix(mime_type)
-    name = filename or f"voice{suffix}"
-    if not name.endswith(suffix):
-        name = f"{name}{suffix}"
+    tmp_path: str | None = None
+    try:
+        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+            tmp.write(content)
+            tmp_path = tmp.name
+        text = await asyncio.to_thread(_transcribe_local_sync, tmp_path)
+        logger.info(
+            "Local STT ok model=%s bytes=%s chars=%s",
+            settings.faster_whisper_model,
+            len(content),
+            len(text or ""),
+        )
+        return text
+    except Exception:
+        logger.exception(
+            "Local faster-whisper transcription failed bytes=%s",
+            len(content),
+        )
+        return None
+    finally:
+        if tmp_path:
+            Path(tmp_path).unlink(missing_ok=True)
+
+
+async def _transcribe_groq(
+    *,
+    content: bytes,
+    mime_type: str,
+    filename: str,
+) -> str | None:
+    if not settings.groq_api_key:
+        logger.warning("GROQ_API_KEY missing; cloud fallback unavailable")
+        return None
+    if not content:
+        return None
 
     try:
         async with httpx.AsyncClient(timeout=60) as client:
@@ -61,7 +134,7 @@ async def transcribe_whatsapp_audio(
                     "prompt": LOGISTICS_STT_PROMPT,
                     "response_format": "json",
                 },
-                files={"file": (name, content, mime_type or "audio/ogg")},
+                files={"file": (filename, content, mime_type or "audio/ogg")},
             )
             response.raise_for_status()
             text = (response.json().get("text") or "").strip()
@@ -79,3 +152,26 @@ async def transcribe_whatsapp_audio(
             len(content),
         )
         return None
+
+
+async def transcribe_whatsapp_audio(
+    *,
+    content: bytes,
+    mime_type: str,
+    filename: str | None = None,
+) -> str | None:
+    """Primary: local faster-whisper. Fallback: Groq cloud STT."""
+    if not content:
+        return None
+
+    suffix = mime_to_suffix(mime_type)
+    name = filename or f"voice{suffix}"
+    if not name.endswith(suffix):
+        name = f"{name}{suffix}"
+
+    local_text = await _transcribe_local(content=content, suffix=suffix)
+    if local_text:
+        return local_text
+
+    logger.info("Local STT empty/failed; attempting Groq fallback")
+    return await _transcribe_groq(content=content, mime_type=mime_type, filename=name)

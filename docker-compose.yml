@@ -27,12 +27,19 @@ services:
     environment:
       DATABASE_URL: postgresql+asyncpg://freight:freight@postgres:5432/freight_ai
       DATABASE_URL_SYNC: postgresql+psycopg2://freight:freight@postgres:5432/freight_ai
+      FASTER_WHISPER_ENABLED: "true"
+      FASTER_WHISPER_MODEL: large-v3
+      FASTER_WHISPER_DEVICE: cpu
+      FASTER_WHISPER_COMPUTE_TYPE: int8
+      HF_HOME: /models
     depends_on:
       postgres:
         condition: service_healthy
     volumes:
       - ./backend:/app
+      - whisper_models:/models
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
 volumes:
   postgres_data:
+  whisper_models:
