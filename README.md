@@ -148,6 +148,7 @@ docker compose down
 
 - **Required fields** are per-company in `companies.required_fields_config` (vehicle/driver optional by default)
 - **LLM:** Set `OPENAI_API_KEY` in `.env` for production extraction; falls back to rule-based parser without it
+- **Voice STT:** set `GROQ_API_KEY` (model default `whisper-large-v3-turbo`); WhatsApp OGG is sent directly (no conversion).
 - **Timezone:** `Asia/Kolkata` for relative dates (`kal`, `aaj`)
 
 ## What You Need to Provide
@@ -167,7 +168,8 @@ docker compose down
 - [x] CREATE / EDIT(correct) / CANCEL
 - [x] n8n workflow template (text path)
 - [ ] WhatsApp Business connection (requires your Meta credentials)
-- [ ] Voice note path (speech-to-text sub-workflow)
+- [x] Voice note path (Groq whisper-large-v3-turbo on FastAPI webhook)
+- [ ] n8n voice note sub-workflow (deferred)
 
 ## Edge Cases Handled
 
