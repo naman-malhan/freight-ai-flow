@@ -1,14 +1,19 @@
+import logging
+import threading
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 from sqlalchemy import select
 
+from app.config import settings
 from app.database import AsyncSessionLocal, engine
 from app.models import Base, Company, Customer, Driver, User, Vehicle
 from app.routers.stt import router as stt_router
 from app.routers.trip_drafts import router as trip_drafts_router
 from app.routers.whatsapp import router as whatsapp_router
+
+logger = logging.getLogger(__name__)
 
 PRIVACY_HTML = """<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><title>Freight AI Privacy Policy</title>
@@ -79,6 +84,25 @@ def create_app(*, enable_lifespan: bool = True) -> FastAPI:
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
         await seed_demo_data()
+
+        # Download/load faster-whisper in background so first voice note is not stuck
+        # on a multi‑GB model pull. Weights live in HF_HOME volume, not the image.
+        if settings.faster_whisper_enabled:
+            def _warm() -> None:
+                try:
+                    from app.services.transcription import warm_whisper_model
+
+                    logger.info(
+                        "Warming faster-whisper model=%s (may download ~3GB once)",
+                        settings.faster_whisper_model,
+                    )
+                    warm_whisper_model()
+                    logger.info("faster-whisper warmup complete")
+                except Exception:
+                    logger.exception("faster-whisper warmup failed")
+
+            threading.Thread(target=_warm, name="whisper-warmup", daemon=True).start()
+
         yield
         await engine.dispose()
 

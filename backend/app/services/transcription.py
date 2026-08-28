@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import tempfile
 import threading
 from pathlib import Path
@@ -24,6 +25,34 @@ LOGISTICS_STT_PROMPT = (
 
 _model_lock = threading.Lock()
 _whisper_model: Any | None = None
+
+
+def whisper_model_cached() -> bool:
+    """True if faster-whisper weights appear present under HF/cache dirs."""
+    roots = [
+        Path(os.environ.get("HF_HOME", "/models")),
+        Path.home() / ".cache" / "huggingface",
+        Path.home() / ".cache" / "whisper",
+    ]
+    needle = settings.faster_whisper_model.replace("/", "--")
+    for root in roots:
+        if not root.exists():
+            continue
+        for path in root.rglob("*"):
+            name = path.name.lower()
+            if needle.lower() in name or "whisper" in name:
+                if path.is_file() and path.stat().st_size > 1_000_000:
+                    return True
+                if path.is_dir() and any(path.iterdir()):
+                    return True
+    return False
+
+
+def warm_whisper_model() -> None:
+    """Blocking load used by startup warmup thread."""
+    if not settings.faster_whisper_enabled:
+        return
+    _get_whisper_model()
 
 
 def mime_to_suffix(mime_type: str) -> str:
@@ -80,12 +109,13 @@ def _transcribe_local_sync(path: str) -> str | None:
     return text or None
 
 
-async def _transcribe_local(*, content: bytes, suffix: str) -> str | None:
+async def _transcribe_local(*, content: bytes, suffix: str) -> tuple[str | None, str | None]:
+    """Returns (text, error_code)."""
     if not settings.faster_whisper_enabled:
         logger.info("Local faster-whisper disabled via FASTER_WHISPER_ENABLED")
-        return None
+        return None, "local_disabled"
     if not content:
-        return None
+        return None, "empty_audio"
 
     tmp_path: str | None = None
     try:
@@ -99,13 +129,16 @@ async def _transcribe_local(*, content: bytes, suffix: str) -> str | None:
             len(content),
             len(text or ""),
         )
-        return text
+        return text, None
+    except ModuleNotFoundError as exc:
+        logger.exception("Local faster-whisper missing dependency: %s", exc)
+        return None, f"local_dependency_missing:{exc.name}"
     except Exception:
         logger.exception(
             "Local faster-whisper transcription failed bytes=%s",
             len(content),
         )
-        return None
+        return None, "local_transcription_failed"
     finally:
         if tmp_path:
             Path(tmp_path).unlink(missing_ok=True)
@@ -175,19 +208,23 @@ async def transcribe_whatsapp_audio_with_meta(
 ) -> dict[str, str | None]:
     """Same as transcribe_whatsapp_audio but includes provider metadata."""
     if not content:
-        return {"text": None, "provider": None}
+        return {"text": None, "provider": None, "error": "empty_audio"}
 
     suffix = mime_to_suffix(mime_type)
     name = filename or f"voice{suffix}"
     if not name.endswith(suffix):
         name = f"{name}{suffix}"
 
-    local_text = await _transcribe_local(content=content, suffix=suffix)
+    local_text, local_error = await _transcribe_local(content=content, suffix=suffix)
     if local_text:
-        return {"text": local_text, "provider": "faster-whisper"}
+        return {"text": local_text, "provider": "faster-whisper", "error": None}
 
-    logger.info("Local STT empty/failed; attempting Groq fallback")
+    logger.info("Local STT empty/failed (%s); attempting Groq fallback", local_error)
     groq_text = await _transcribe_groq(content=content, mime_type=mime_type, filename=name)
     if groq_text:
-        return {"text": groq_text, "provider": "groq"}
-    return {"text": None, "provider": None}
+        return {"text": groq_text, "provider": "groq", "error": None}
+    return {
+        "text": None,
+        "provider": None,
+        "error": local_error or "empty_transcript",
+    }

@@ -137,6 +137,35 @@ curl -sS "https://graph.facebook.com/v21.0/me" -H "Authorization: Bearer $TOKEN"
 
 ---
 
+## Why Docker image is ~1.5GB but Whisper large-v3 is ~3GB
+
+**Root cause of confusion:** Whisper **weights are not inside** `freightaiflow-api` image.
+
+| What | Size | Where |
+|------|------|--------|
+| Docker image | ~1.5–1.7GB | App + Python + ffmpeg + `faster-whisper` **library** |
+| Model `large-v3` | ~3GB | Downloaded at **runtime** into volume `whisper_models` → `/models` (`HF_HOME`) |
+
+If `/models` is empty, Whisper never downloaded — usually because media download failed first (expired Meta token), so STT never reached model load.
+
+Check:
+
+```bash
+curl -sS http://localhost:8000/v1/stt/status
+docker compose exec api du -sh /models
+```
+
+---
+
+## STT `empty_transcript_or_media_download_failed` / Send STT Failed
+
+Latest API returns a **specific** `error` field, e.g.:
+- `media_download_unauthorized_token_expired` ← fix Meta token in `backend/.env`
+- `local_dependency_missing:requests` ← rebuild image (fixed in repo)
+- `empty_transcript` ← audio downloaded but STT produced nothing
+
+---
+
 ## WhatsApp 401 / OAuthException code 190
 
 **Symptom:** FastAPI logs `401 Unauthorized` on `graph.facebook.com/.../messages` while handling voice.

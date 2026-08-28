@@ -79,8 +79,6 @@ class WhatsAppClient:
             )
             if response.status_code >= 400:
                 logger.error("WhatsApp send failed: %s %s", response.status_code, response.text)
-                # Do not raise — callers (draft replies / STT failure notices) should not
-                # abort the whole webhook when Meta token is expired.
                 return {
                     "error": True,
                     "status_code": response.status_code,
@@ -105,17 +103,47 @@ class WhatsAppClient:
         meta = await self.transcribe_audio_with_meta(media_id)
         return meta.get("text") if meta else None
 
-    async def transcribe_audio_with_meta(self, media_id: str) -> dict[str, str | None]:
+    async def transcribe_audio_with_meta(self, media_id: str) -> dict[str, Any]:
         if not media_id:
-            return {"text": None, "provider": None}
+            return {"text": None, "provider": None, "error": "missing_media_id"}
         try:
             content, mime_type = await self.download_media(media_id)
+        except httpx.HTTPStatusError as exc:
+            status = exc.response.status_code if exc.response is not None else None
+            logger.exception("WhatsApp media download failed media_id=%s", media_id)
+            if status == 401:
+                return {
+                    "text": None,
+                    "provider": None,
+                    "error": "media_download_unauthorized_token_expired",
+                }
+            return {
+                "text": None,
+                "provider": None,
+                "error": f"media_download_failed_http_{status}",
+            }
+        except Exception:
+            logger.exception("WhatsApp media download failed media_id=%s", media_id)
+            return {"text": None, "provider": None, "error": "media_download_failed"}
+
+        try:
             suffix = mime_to_suffix(mime_type)
-            return await transcribe_whatsapp_audio_with_meta(
+            result = await transcribe_whatsapp_audio_with_meta(
                 content=content,
                 mime_type=mime_type,
                 filename=f"voice{suffix}",
             )
+            if not result.get("text"):
+                return {
+                    "text": None,
+                    "provider": result.get("provider"),
+                    "error": "empty_transcript",
+                }
+            return {
+                "text": result.get("text"),
+                "provider": result.get("provider"),
+                "error": None,
+            }
         except Exception:
             logger.exception("Audio transcription failed for media_id=%s", media_id)
-            return {"text": None, "provider": None}
+            return {"text": None, "provider": None, "error": "transcription_exception"}

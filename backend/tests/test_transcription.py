@@ -12,7 +12,9 @@ async def test_transcribe_uses_local_primary_when_available():
         patch.object(
             transcription,
             "_transcribe_local",
-            new=AsyncMock(return_value="Kal HR55AB1234 Gurgaon se Jaipur freight 42000"),
+            new=AsyncMock(
+                return_value=("Kal HR55AB1234 Gurgaon se Jaipur freight 42000", None)
+            ),
         ),
         patch.object(
             transcription,
@@ -42,7 +44,11 @@ async def test_transcribe_falls_back_to_groq_when_local_fails():
 
     with (
         patch.object(transcription.settings, "faster_whisper_enabled", True),
-        patch.object(transcription, "_transcribe_local", new=AsyncMock(return_value=None)),
+        patch.object(
+            transcription,
+            "_transcribe_local",
+            new=AsyncMock(return_value=(None, "local_transcription_failed")),
+        ),
         patch.object(transcription.settings, "groq_api_key", "gsk_test"),
         patch.object(transcription.settings, "groq_stt_model", "whisper-large-v3-turbo"),
         patch("app.services.transcription.httpx.AsyncClient", return_value=mock_client),
@@ -63,7 +69,11 @@ async def test_transcribe_falls_back_to_groq_when_local_fails():
 @pytest.mark.asyncio
 async def test_transcribe_returns_none_when_local_and_groq_fail():
     with (
-        patch.object(transcription, "_transcribe_local", new=AsyncMock(return_value=None)),
+        patch.object(
+            transcription,
+            "_transcribe_local",
+            new=AsyncMock(return_value=(None, "local_transcription_failed")),
+        ),
         patch.object(transcription.settings, "groq_api_key", None),
     ):
         result = await transcription.transcribe_whatsapp_audio(
@@ -80,7 +90,11 @@ async def test_transcribe_groq_http_error_returns_none_after_local_fail():
     mock_client.post = AsyncMock(side_effect=Exception("groq down"))
 
     with (
-        patch.object(transcription, "_transcribe_local", new=AsyncMock(return_value=None)),
+        patch.object(
+            transcription,
+            "_transcribe_local",
+            new=AsyncMock(return_value=(None, "local_transcription_failed")),
+        ),
         patch.object(transcription.settings, "groq_api_key", "gsk_test"),
         patch("app.services.transcription.httpx.AsyncClient", return_value=mock_client),
     ):
