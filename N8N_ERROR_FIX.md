@@ -137,6 +137,27 @@ curl -sS "https://graph.facebook.com/v21.0/me" -H "Authorization: Bearer $TOKEN"
 
 ---
 
+## WhatsApp 401 / OAuthException code 190
+
+**Symptom:** FastAPI logs `401 Unauthorized` on `graph.facebook.com/.../messages` while handling voice.
+
+**Root cause:** `backend/.env` → `WHATSAPP_ACCESS_TOKEN` **expired** (Meta temporary tokens expire ~24h). Same token is required to **download** voice media before Whisper can run — so STT never gets audio bytes.
+
+**Fix:** Meta Developer → WhatsApp → API Setup → **Generate access token** → paste into:
+1. `backend/.env` → `WHATSAPP_ACCESS_TOKEN=`
+2. n8n credential **WhatsApp Business Cloud API** (send nodes)
+3. `docker compose up -d --build api` (or restart api)
+
+Verify (secret not printed):
+
+```bash
+TOKEN=$(grep '^WHATSAPP_ACCESS_TOKEN=' backend/.env | cut -d= -f2-)
+curl -sS "https://graph.facebook.com/v21.0/me" -H "Authorization: Bearer $TOKEN"
+# must NOT contain "Session has expired"
+```
+
+---
+
 ## Voice note 422 (`text: null`) — root cause + fix
 
 **Symptom:** n8n `Extract Trip Intent` → `422 Input should be a valid string` with `"text": null`.

@@ -6,6 +6,7 @@ from sqlalchemy import select
 
 from app.database import AsyncSessionLocal, engine
 from app.models import Base, Company, Customer, Driver, User, Vehicle
+from app.routers.stt import router as stt_router
 from app.routers.trip_drafts import router as trip_drafts_router
 from app.routers.whatsapp import router as whatsapp_router
 
@@ -89,6 +90,7 @@ def create_app(*, enable_lifespan: bool = True) -> FastAPI:
     )
     app.include_router(trip_drafts_router)
     app.include_router(whatsapp_router)
+    app.include_router(stt_router)
 
     @app.get("/health")
     async def health():

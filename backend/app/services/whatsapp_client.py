@@ -6,7 +6,7 @@ from typing import Any
 import httpx
 
 from app.config import settings
-from app.services.transcription import mime_to_suffix, transcribe_whatsapp_audio
+from app.services.transcription import mime_to_suffix, transcribe_whatsapp_audio_with_meta
 
 logger = logging.getLogger(__name__)
 
@@ -79,7 +79,13 @@ class WhatsAppClient:
             )
             if response.status_code >= 400:
                 logger.error("WhatsApp send failed: %s %s", response.status_code, response.text)
-                response.raise_for_status()
+                # Do not raise — callers (draft replies / STT failure notices) should not
+                # abort the whole webhook when Meta token is expired.
+                return {
+                    "error": True,
+                    "status_code": response.status_code,
+                    "body": response.text,
+                }
             return response.json()
 
     async def download_media(self, media_id: str) -> tuple[bytes, str]:
@@ -96,16 +102,20 @@ class WhatsAppClient:
             return file_resp.content, mime_type
 
     async def transcribe_audio(self, media_id: str) -> str | None:
+        meta = await self.transcribe_audio_with_meta(media_id)
+        return meta.get("text") if meta else None
+
+    async def transcribe_audio_with_meta(self, media_id: str) -> dict[str, str | None]:
         if not media_id:
-            return None
+            return {"text": None, "provider": None}
         try:
             content, mime_type = await self.download_media(media_id)
             suffix = mime_to_suffix(mime_type)
-            return await transcribe_whatsapp_audio(
+            return await transcribe_whatsapp_audio_with_meta(
                 content=content,
                 mime_type=mime_type,
                 filename=f"voice{suffix}",
             )
         except Exception:
             logger.exception("Audio transcription failed for media_id=%s", media_id)
-            return None
+            return {"text": None, "provider": None}

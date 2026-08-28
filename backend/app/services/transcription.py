@@ -160,9 +160,22 @@ async def transcribe_whatsapp_audio(
     mime_type: str,
     filename: str | None = None,
 ) -> str | None:
-    """Primary: local faster-whisper. Fallback: Groq cloud STT."""
+    """Primary: local faster-whisper. Fallback: Groq cloud STT. Returns text only."""
+    meta = await transcribe_whatsapp_audio_with_meta(
+        content=content, mime_type=mime_type, filename=filename
+    )
+    return meta.get("text") if meta else None
+
+
+async def transcribe_whatsapp_audio_with_meta(
+    *,
+    content: bytes,
+    mime_type: str,
+    filename: str | None = None,
+) -> dict[str, str | None]:
+    """Same as transcribe_whatsapp_audio but includes provider metadata."""
     if not content:
-        return None
+        return {"text": None, "provider": None}
 
     suffix = mime_to_suffix(mime_type)
     name = filename or f"voice{suffix}"
@@ -171,7 +184,10 @@ async def transcribe_whatsapp_audio(
 
     local_text = await _transcribe_local(content=content, suffix=suffix)
     if local_text:
-        return local_text
+        return {"text": local_text, "provider": "faster-whisper"}
 
     logger.info("Local STT empty/failed; attempting Groq fallback")
-    return await _transcribe_groq(content=content, mime_type=mime_type, filename=name)
+    groq_text = await _transcribe_groq(content=content, mime_type=mime_type, filename=name)
+    if groq_text:
+        return {"text": groq_text, "provider": "groq"}
+    return {"text": None, "provider": None}

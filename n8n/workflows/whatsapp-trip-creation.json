@@ -75,7 +75,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ text: ($json.text || ''), timezone: 'Asia/Kolkata' }) }}",
+        "jsonBody": "={{ JSON.stringify({ text: $json.text, timezone: 'Asia/Kolkata' }) }}",
         "options": {
           "timeout": 60000
         }
@@ -104,7 +104,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({\n  sender_phone: $('Normalize Incoming Message').item.json.sender_phone,\n  source_message_id: $('Normalize Incoming Message').item.json.message_id,\n  raw_text: $('Normalize Incoming Message').item.json.text,\n  extraction: $json\n}) }}",
+        "jsonBody": "={{ JSON.stringify({\n  sender_phone: $('Normalize Incoming Message').item.json.sender_phone,\n  source_message_id: $('Normalize Incoming Message').item.json.message_id,\n  raw_text: $('Normalize Incoming Message').item.json.media_id\n    ? $('Merge Transcript into Flow').item.json.text\n    : $('Normalize Incoming Message').item.json.text,\n  extraction: $json\n}) }}",
         "options": {
           "timeout": 60000
         }
@@ -447,7 +447,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "https://49b2-103-248-87-67.ngrok-free.app/v1/whatsapp/webhook",
+        "url": "https://49b2-103-248-87-67.ngrok-free.app/v1/stt/whatsapp-media",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
@@ -463,7 +463,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ entry: [{ changes: [{ value: { messages: [{ from: $json.sender_phone, id: $json.message_id, type: 'audio', audio: { id: $json.media_id } }] } }] }] }) }}",
+        "jsonBody": "={{ JSON.stringify({ media_id: $json.media_id }) }}",
         "options": {
           "timeout": 180000
         }
@@ -476,7 +476,7 @@
         1120,
         520
       ],
-      "notes": "Forwards voice note to FastAPI /v1/whatsapp/webhook so local faster-whisper (+ Groq fallback) runs. FastAPI sends WhatsApp replies."
+      "notes": "STT only: returns {ok,text,provider}. Transcript is merged back into n8n text flow (Extract \u2192 Draft). Requires valid WHATSAPP_ACCESS_TOKEN in backend/.env to download media."
     },
     {
       "parameters": {
@@ -523,6 +523,70 @@
       "position": [
         1340,
         420
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const norm = $('Normalize Incoming Message').item.json;\nconst stt = $input.first().json || {};\nconst text = (stt.text || '').trim() || null;\nreturn [{\n  json: {\n    sender_phone: norm.sender_phone,\n    message_id: norm.message_id,\n    message_type: norm.message_type,\n    media_id: norm.media_id,\n    timestamp: norm.timestamp,\n    interactive_reply: norm.interactive_reply,\n    text,\n    stt_ok: !!stt.ok,\n    stt_provider: stt.provider || null,\n    stt_error: stt.error || null,\n    route: text ? 'TEXT' : 'AUDIO_FAILED',\n  },\n}];\n"
+      },
+      "id": "merge-transcript",
+      "name": "Merge Transcript into Flow",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1340,
+        520
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "send",
+        "phoneNumberId": "1256431730893371",
+        "recipientPhoneNumber": "={{ $('Normalize Incoming Message').item.json.sender_phone }}",
+        "textBody": "Voice note samajh nahi aaya. Please trip details type karke bhejein (example: Kal HR55AB1234 Gurgaon se Jaipur, ABC party, freight 42000)."
+      },
+      "id": "send-stt-failed",
+      "name": "Send STT Failed",
+      "type": "n8n-nodes-base.whatsApp",
+      "typeVersion": 1,
+      "position": [
+        1780,
+        620
+      ],
+      "notes": "Credential: WhatsApp Business Cloud API. phoneNumberId may need hardcoding in UI if env empty."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "stt-has-text",
+              "leftValue": "={{ $json.text }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-stt-text",
+      "name": "IF STT Has Text",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1560,
+        520
       ]
     }
   ],
@@ -704,9 +768,49 @@
           }
         ]
       ]
+    },
+    "Handle Audio via FastAPI (STT)": {
+      "main": [
+        [
+          {
+            "node": "Merge Transcript into Flow",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Transcript into Flow": {
+      "main": [
+        [
+          {
+            "node": "IF STT Has Text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF STT Has Text": {
+      "main": [
+        [
+          {
+            "node": "Extract Trip Intent",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send STT Failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "meta": {
-    "description": "Text path in n8n; voice notes forwarded to FastAPI /v1/whatsapp/webhook (faster-whisper primary + Groq fallback). Base: https://49b2-103-248-87-67.ngrok-free.app \u2014 update after every ngrok restart."
+    "description": "Voice: Normalize\u2192IF Audio\u2192POST /v1/stt/whatsapp-media\u2192Merge transcript\u2192Extract\u2192Draft (n8n sends replies). Base: https://49b2-103-248-87-67.ngrok-free.app. backend/.env WHATSAPP_ACCESS_TOKEN must be valid for media download."
   }
 }
