@@ -1,13 +1,12 @@
 from __future__ import annotations
 
-import io
 import logging
 from typing import Any
 
 import httpx
-from openai import AsyncOpenAI
 
 from app.config import settings
+from app.services.transcription import mime_to_suffix, transcribe_whatsapp_audio
 
 logger = logging.getLogger(__name__)
 
@@ -97,28 +96,16 @@ class WhatsAppClient:
             return file_resp.content, mime_type
 
     async def transcribe_audio(self, media_id: str) -> str | None:
-        if not settings.openai_api_key:
+        if not media_id:
             return None
         try:
             content, mime_type = await self.download_media(media_id)
-            suffix = ".ogg"
-            if "mpeg" in mime_type or "mp3" in mime_type:
-                suffix = ".mp3"
-            elif "mp4" in mime_type or "m4a" in mime_type:
-                suffix = ".m4a"
-            elif "wav" in mime_type:
-                suffix = ".wav"
-
-            bio = io.BytesIO(content)
-            bio.name = f"voice{suffix}"
-
-            client = AsyncOpenAI(api_key=settings.openai_api_key)
-            result = await client.audio.transcriptions.create(
-                model="whisper-1",
-                file=bio,
-                language="hi",
+            suffix = mime_to_suffix(mime_type)
+            return await transcribe_whatsapp_audio(
+                content=content,
+                mime_type=mime_type,
+                filename=f"voice{suffix}",
             )
-            return (result.text or "").strip() or None
         except Exception:
             logger.exception("Audio transcription failed for media_id=%s", media_id)
             return None
