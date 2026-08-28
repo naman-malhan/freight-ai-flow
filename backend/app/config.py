@@ -10,6 +10,8 @@ class Settings(BaseSettings):
     draft_expiry_hours: int = 24
     openai_api_key: str | None = None
     llm_model: str = "gpt-4o-mini"
+    groq_api_key: str | None = None
+    groq_stt_model: str = "whisper-large-v3-turbo"
 
     whatsapp_phone_number_id: str | None = None
     whatsapp_business_account_id: str | None = None
