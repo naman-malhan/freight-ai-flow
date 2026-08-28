@@ -6,3 +6,4 @@ __pycache__/
 postgres_data/
 .venv/
 venv/
+.superpowers/
