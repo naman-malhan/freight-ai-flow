@@ -137,6 +137,22 @@ curl -sS "https://graph.facebook.com/v21.0/me" -H "Authorization: Bearer $TOKEN"
 
 ---
 
+## Voice note 422 (`text: null`) — root cause + fix
+
+**Symptom:** n8n `Extract Trip Intent` → `422 Input should be a valid string` with `"text": null`.
+
+**Root cause:** Meta webhook hits **n8n Text Path**. Voice messages have no `message.text.body`, so Normalize set `text=null`. Whisper/faster-whisper only runs on FastAPI `/v1/whatsapp/webhook` — that path was never called.
+
+**Fix (repo):** `n8n/workflows/whatsapp-trip-creation.json`
+1. Normalize detects `type=audio` → `route=AUDIO` + `media_id`
+2. `IF Audio Message` → `Handle Audio via FastAPI (STT)` posts reconstructed webhook to `/v1/whatsapp/webhook`
+3. FastAPI runs local faster-whisper (Groq fallback) + draft replies
+4. Non-audio empty text → `IF Has Text` → ignore (no more null extract)
+
+**Action:** Re-import/republish the workflow JSON in n8n Cloud after pulling this change.
+
+---
+
 ## Quick verify
 
 ```bash

@@ -1,5 +1,5 @@
 {
-  "name": "Freight AI - WhatsApp Trip Creation (Text Path)",
+  "name": "Freight AI - WhatsApp Trip Creation (Text + Voice)",
   "nodes": [
     {
       "parameters": {},
@@ -11,11 +11,11 @@
         240,
         300
       ],
-      "notes": "Credential: WhatsApp TRIGGER (OAuth2) — App ID + App Secret. NOT the same as Send credential."
+      "notes": "Credential: WhatsApp TRIGGER (OAuth2) \u2014 App ID + App Secret. NOT the same as Send credential."
     },
     {
       "parameters": {
-        "jsCode": "const msg = $input.first().json;\n\n// n8n WhatsApp Trigger already unwraps Meta webhook to value-level fields.\n// Also support raw Meta webhook shape: entry[0].changes[0].value\nconst value =\n  msg.messages || msg.contacts || msg.metadata\n    ? msg\n    : msg.entry?.[0]?.changes?.[0]?.value || msg;\n\nconst message = (value.messages || [])[0] || {};\nconst interactive = message.interactive || {};\nconst buttonId =\n  interactive.button_reply?.id ||\n  interactive.list_reply?.id ||\n  null;\n\nconst text =\n  message.text?.body ||\n  (typeof message.text === 'string' ? message.text : null) ||\n  null;\n\nconst interactiveReply = buttonId ? String(buttonId).toUpperCase() : null;\n\nlet route = 'TEXT';\nif (interactiveReply === 'CREATE') route = 'CREATE';\nelse if (interactiveReply === 'CANCEL') route = 'CANCEL';\nelse if (interactiveReply === 'EDIT') route = 'EDIT';\nelse if (interactiveReply) route = 'OTHER_BUTTON';\n\nreturn [{\n  json: {\n    sender_phone: message.from || null,\n    message_id: message.id || null,\n    message_type: message.type || null,\n    text,\n    timestamp: message.timestamp || null,\n    interactive_reply: interactiveReply,\n    route,\n  },\n}];"
+        "jsCode": "const msg = $input.first().json;\n\n// n8n WhatsApp Trigger already unwraps Meta webhook to value-level fields.\n// Also support raw Meta webhook shape: entry[0].changes[0].value\nconst value =\n  msg.messages || msg.contacts || msg.metadata\n    ? msg\n    : msg.entry?.[0]?.changes?.[0]?.value || msg;\n\nconst message = (value.messages || [])[0] || {};\nconst interactive = message.interactive || {};\nconst buttonId =\n  interactive.button_reply?.id ||\n  interactive.list_reply?.id ||\n  null;\n\nconst text =\n  message.text?.body ||\n  (typeof message.text === 'string' ? message.text : null) ||\n  null;\n\nconst mediaId =\n  message.audio?.id ||\n  message.voice?.id ||\n  null;\n\nconst interactiveReply = buttonId ? String(buttonId).toUpperCase() : null;\n\nlet route = 'TEXT';\nif (interactiveReply === 'CREATE') route = 'CREATE';\nelse if (interactiveReply === 'CANCEL') route = 'CANCEL';\nelse if (interactiveReply === 'EDIT') route = 'EDIT';\nelse if (interactiveReply) route = 'OTHER_BUTTON';\nelse if ((message.type === 'audio' || message.type === 'voice') && mediaId) route = 'AUDIO';\n\nreturn [{\n  json: {\n    sender_phone: message.from || null,\n    message_id: message.id || null,\n    message_type: message.type || null,\n    text,\n    media_id: mediaId,\n    timestamp: message.timestamp || null,\n    interactive_reply: interactiveReply,\n    route,\n  },\n}];\n"
       },
       "id": "normalize",
       "name": "Normalize Incoming Message",
@@ -75,7 +75,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ text: $json.text, timezone: 'Asia/Kolkata' }) }}",
+        "jsonBody": "={{ JSON.stringify({ text: ($json.text || ''), timezone: 'Asia/Kolkata' }) }}",
         "options": {
           "timeout": 60000
         }
@@ -410,6 +410,120 @@
         520
       ],
       "notes": "Credential: WhatsApp Business Cloud API"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "is-audio",
+              "leftValue": "={{ $json.route }}",
+              "rightValue": "AUDIO",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-audio",
+      "name": "IF Audio Message",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        900,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://49b2-103-248-87-67.ngrok-free.app/v1/whatsapp/webhook",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "ngrok-skip-browser-warning",
+              "value": "true"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ entry: [{ changes: [{ value: { messages: [{ from: $json.sender_phone, id: $json.message_id, type: 'audio', audio: { id: $json.media_id } }] } }] }] }) }}",
+        "options": {
+          "timeout": 180000
+        }
+      },
+      "id": "handle-audio-fastapi",
+      "name": "Handle Audio via FastAPI (STT)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1120,
+        520
+      ],
+      "notes": "Forwards voice note to FastAPI /v1/whatsapp/webhook so local faster-whisper (+ Groq fallback) runs. FastAPI sends WhatsApp replies."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "has-text",
+              "leftValue": "={{ $json.text }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-has-text",
+      "name": "IF Has Text",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1120,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: { status: 'ignored', reason: 'empty_or_unsupported_message', message_type: $json.message_type, route: $json.route } }];"
+      },
+      "id": "ignore-empty",
+      "name": "Ignore Empty/Unsupported",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1340,
+        420
+      ]
     }
   ],
   "connections": {
@@ -446,7 +560,7 @@
         ],
         [
           {
-            "node": "Extract Trip Intent",
+            "node": "IF Audio Message",
             "type": "main",
             "index": 0
           }
@@ -554,9 +668,45 @@
           }
         ]
       ]
+    },
+    "IF Audio Message": {
+      "main": [
+        [
+          {
+            "node": "Handle Audio via FastAPI (STT)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "IF Has Text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF Has Text": {
+      "main": [
+        [
+          {
+            "node": "Extract Trip Intent",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Ignore Empty/Unsupported",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "meta": {
-    "description": "n8n Cloud path via ngrok only (no Cloudflare). Base: https://49b2-103-248-87-67.ngrok-free.app — update after every ngrok restart."
+    "description": "Text path in n8n; voice notes forwarded to FastAPI /v1/whatsapp/webhook (faster-whisper primary + Groq fallback). Base: https://49b2-103-248-87-67.ngrok-free.app \u2014 update after every ngrok restart."
   }
 }
