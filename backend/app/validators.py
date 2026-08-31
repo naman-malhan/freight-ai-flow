@@ -1,12 +1,18 @@
 import hashlib
 import re
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from dateutil import parser as date_parser
 from dateutil.relativedelta import relativedelta
 
 from app.config import settings
+
+# Explicit calendar year in user text: 2026, or 30/10/23, or 30-10-2025
+_EXPLICIT_YEAR_RE = re.compile(
+    r"(?:\b(?:19|20)\d{2}\b|\b\d{1,2}[/.\-]\d{1,2}[/.\-](\d{2}|\d{4})\b)",
+    re.IGNORECASE,
+)
 
 INDIAN_VEHICLE_PATTERN = re.compile(
     r"^[A-Z]{2}[0-9]{1,2}[A-Z]{0,3}[0-9]{1,4}$",
@@ -82,6 +88,40 @@ def normalize_freight_amount(value: str | float | int | None) -> float | None:
     return amount if amount > 0 else None
 
 
+def phrase_mentions_year(phrase: str | None) -> bool:
+    """True only when the user (or transcript) explicitly included a calendar year."""
+    if not phrase or not str(phrase).strip():
+        return False
+    return bool(_EXPLICIT_YEAR_RE.search(str(phrase)))
+
+
+def coerce_pickup_year(
+    iso_date: str | None,
+    *,
+    phrase: str | None,
+    timezone: str,
+    reference: datetime | None = None,
+) -> str | None:
+    """If no year was spoken, force the reference/current year (e.g. 2026)."""
+    if not iso_date:
+        return None
+    text = str(iso_date).strip()
+    try:
+        parsed = date.fromisoformat(text[:10])
+    except ValueError:
+        try:
+            parsed = date_parser.parse(text).date()
+        except (ValueError, TypeError, OverflowError):
+            return iso_date
+
+    if phrase_mentions_year(phrase):
+        return parsed.isoformat()
+
+    tz = ZoneInfo(timezone)
+    now = reference or datetime.now(tz)
+    return parsed.replace(year=now.year).isoformat()
+
+
 def resolve_relative_date(
     phrase: str | None,
     *,
@@ -114,7 +154,8 @@ def resolve_relative_date(
         parsed = date_parser.parse(raw, fuzzy=True, default=now.replace(hour=9, minute=0))
         if parsed.tzinfo is None:
             parsed = parsed.replace(tzinfo=tz)
-        return parsed.date().isoformat(), None
+        iso = parsed.date().isoformat()
+        return coerce_pickup_year(iso, phrase=raw, timezone=timezone, reference=now), None
     except (ValueError, OverflowError):
         return None, f"Pickup date samajh nahi aayi: '{raw}'. Date ya 'kal'/'aaj' likhein."
 
@@ -165,17 +206,17 @@ def draft_expires_at(timezone: str) -> datetime:
 
 
 def format_display_date(value: str | None) -> str:
-    """Format stored ISO date (YYYY-MM-DD) as DD/MM/YY for WhatsApp replies."""
+    """Format stored ISO date (YYYY-MM-DD) as DD/MM/YYYY for WhatsApp replies."""
     if not value:
         return ""
     text = str(value).strip()
     for fmt in ("%Y-%m-%d", "%Y/%m/%d", "%d/%m/%Y", "%d-%m-%Y", "%d/%m/%y"):
         try:
-            return datetime.strptime(text[:10], fmt).strftime("%d/%m/%y")
+            return datetime.strptime(text[:10], fmt).strftime("%d/%m/%Y")
         except ValueError:
             continue
     try:
-        return date_parser.parse(text).date().strftime("%d/%m/%y")
+        return date_parser.parse(text).date().strftime("%d/%m/%Y")
     except (ValueError, TypeError, OverflowError):
         return text
 

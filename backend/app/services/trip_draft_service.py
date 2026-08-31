@@ -18,6 +18,7 @@ from app.schemas import (
 )
 from app.services.master_data import get_company, get_user_by_phone, match_customer, match_driver, match_vehicle
 from app.validators import (
+    coerce_pickup_year,
     compute_missing_fields,
     draft_expires_at,
     format_confirmation_summary,
@@ -70,7 +71,12 @@ class TripDraftService:
             )
         )
 
-    async def _normalize_fields(self, fields: TripFields, company_timezone: str) -> tuple[dict, str | None]:
+    async def _normalize_fields(
+        self,
+        fields: TripFields,
+        company_timezone: str,
+        source_text: str | None = None,
+    ) -> tuple[dict, str | None]:
         data = fields.model_dump()
         clarification = None
 
@@ -88,6 +94,10 @@ class TripDraftService:
             else:
                 data["freight_amount"] = normalized
 
+        year_context = " ".join(
+            part for part in (data.get("pickup_date_raw"), source_text) if part
+        )
+
         if not data.get("pickup_date") and data.get("pickup_date_raw"):
             resolved, date_clarification = resolve_relative_date(
                 data["pickup_date_raw"], timezone=company_timezone
@@ -96,6 +106,14 @@ class TripDraftService:
                 data["pickup_date"] = resolved
             elif date_clarification:
                 clarification = clarification or date_clarification
+
+        # LLM often invents a stale year (e.g. 2023). Unless the user said a year, use current.
+        if data.get("pickup_date"):
+            data["pickup_date"] = coerce_pickup_year(
+                data["pickup_date"],
+                phrase=year_context or data.get("pickup_date_raw"),
+                timezone=company_timezone,
+            )
 
         return data, clarification
 
@@ -150,7 +168,11 @@ class TripDraftService:
         if extraction.clarification_needed:
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail=extraction.clarification_needed)
 
-        fields_dict, clarification = await self._normalize_fields(extraction.fields, company.timezone)
+        fields_dict, clarification = await self._normalize_fields(
+            extraction.fields,
+            company.timezone,
+            source_text=request.raw_text,
+        )
         if clarification:
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail=clarification)
 
@@ -234,7 +256,11 @@ class TripDraftService:
         merged.update(request.field_updates)
 
         fields = TripFields.model_validate(merged)
-        fields_dict, clarification = await self._normalize_fields(fields, company.timezone if company else "Asia/Kolkata")
+        fields_dict, clarification = await self._normalize_fields(
+            fields,
+            company.timezone if company else "Asia/Kolkata",
+            source_text=request.raw_text or draft.raw_text,
+        )
         if clarification:
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail=clarification)
 

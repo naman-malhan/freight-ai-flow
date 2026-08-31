@@ -141,10 +141,10 @@ curl -sS "https://graph.facebook.com/v21.0/me" -H "Authorization: Bearer $TOKEN"
 
 **Root cause of confusion:** Whisper **weights are not inside** `freightaiflow-api` image.
 
-| What | Size | Where |
-|------|------|--------|
-| Docker image | ~1.5–1.7GB | App + Python + ffmpeg + `faster-whisper` **library** |
-| Model `large-v3` | ~3GB | Downloaded at **runtime** into volume `whisper_models` → `/models` (`HF_HOME`) |
+| What             | Size       | Where                                                                          |
+| ---------------- | ---------- | ------------------------------------------------------------------------------ |
+| Docker image     | ~1.5–1.7GB | App + Python + ffmpeg + `faster-whisper` **library**                           |
+| Model `large-v3` | ~3GB       | Downloaded at **runtime** into volume `whisper_models` → `/models` (`HF_HOME`) |
 
 If `/models` is empty, Whisper never downloaded — usually because media download failed first (expired Meta token), so STT never reached model load.
 
@@ -160,6 +160,7 @@ docker compose exec api du -sh /models
 ## STT `empty_transcript_or_media_download_failed` / Send STT Failed
 
 Latest API returns a **specific** `error` field, e.g.:
+
 - `media_download_unauthorized_token_expired` ← fix Meta token in `backend/.env`
 - `local_dependency_missing:requests` ← rebuild image (fixed in repo)
 - `empty_transcript` ← audio downloaded but STT produced nothing
@@ -173,6 +174,7 @@ Latest API returns a **specific** `error` field, e.g.:
 **Root cause:** `backend/.env` → `WHATSAPP_ACCESS_TOKEN` **expired** (Meta temporary tokens expire ~24h). Same token is required to **download** voice media before Whisper can run — so STT never gets audio bytes.
 
 **Fix:** Meta Developer → WhatsApp → API Setup → **Generate access token** → paste into:
+
 1. `backend/.env` → `WHATSAPP_ACCESS_TOKEN=`
 2. n8n credential **WhatsApp Business Cloud API** (send nodes)
 3. `docker compose up -d --build api` (or restart api)
@@ -194,6 +196,7 @@ curl -sS "https://graph.facebook.com/v21.0/me" -H "Authorization: Bearer $TOKEN"
 **Root cause:** Meta webhook hits **n8n Text Path**. Voice messages have no `message.text.body`, so Normalize set `text=null`. Whisper/faster-whisper only runs on FastAPI `/v1/whatsapp/webhook` — that path was never called.
 
 **Fix (repo):** `n8n/workflows/whatsapp-trip-creation.json`
+
 1. Normalize detects `type=audio` → `route=AUDIO` + `media_id`
 2. `IF Audio Message` → `Handle Audio via FastAPI (STT)` posts reconstructed webhook to `/v1/whatsapp/webhook`
 3. FastAPI runs local faster-whisper (Groq fallback) + draft replies
@@ -232,3 +235,31 @@ Point Meta webhook Callback URL to:
 `https://49b2-103-248-87-67.ngrok-free.app/v1/whatsapp/webhook`
 
 Verify token: `freightai_webhook_verify_2026` (or value in `backend/.env`)
+
+## Fault-tolerant n8n workflow (2026-08-29)
+
+HTTP nodes use `onError: continueErrorOutput` → `Build Error Message` → `Send Error to User`.
+WhatsApp send nodes do **not** continue on fail (no error loops).
+
+### Re-import after pulling this repo
+
+1. n8n → Workflows → open **Freight AI - WhatsApp Trip Creation (Text + Voice)** (or Import from file).
+2. Import / replace from `n8n/workflows/whatsapp-trip-creation.json`.
+3. Re-select WhatsApp credentials on Trigger + all Send / Graph nodes if import cleared them.
+4. **Publish** (keep Active).
+5. Smoke test: stop FastAPI, send a WhatsApp text → should receive _Service temporarily unavailable..._ (or generic), not silence.
+6. Smoke test: voice with bad token → _Voice processing unavailable..._ or _WhatsApp access expired..._
+7. Smoke test: after draft buttons, tap **CREATE** → trip created message (not silence).
+
+### CREATE tap = new execution (this is correct)
+
+WhatsApp sends a **new webhook** when the user taps CREATE. n8n starts a **new execution** that loads open draft `D-N` from the DB. The previous voice execution ending is normal — do **not** try to keep one execution open forever. Keep the workflow **Published/Active** instead.
+
+### CREATE pressed but no WhatsApp reply (fixed 2026-08-29)
+
+Causes that used to go silent:
+
+1. Button reply not parsed → fell into Ignore Empty (no send) — **fixed**: harder Normalize + `Send Unsupported`
+2. EDIT / other button → Switch fallback unconnected — **fixed**: `Send Edit Hint`
+3. HTTP confirm/resolve failed with no error branch — use fault-tolerant import above
+4. Stale ngrok URL in HTTP nodes — update base URL if ngrok restarted

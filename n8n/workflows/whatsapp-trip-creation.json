@@ -11,11 +11,11 @@
         240,
         300
       ],
-      "notes": "Credential: WhatsApp TRIGGER (OAuth2) \u2014 App ID + App Secret. NOT the same as Send credential."
+      "notes": "Credential: WhatsApp TRIGGER (OAuth2) — App ID + App Secret. NOT the same as Send credential."
     },
     {
       "parameters": {
-        "jsCode": "const msg = $input.first().json;\n\n// n8n WhatsApp Trigger already unwraps Meta webhook to value-level fields.\n// Also support raw Meta webhook shape: entry[0].changes[0].value\nconst value =\n  msg.messages || msg.contacts || msg.metadata\n    ? msg\n    : msg.entry?.[0]?.changes?.[0]?.value || msg;\n\nconst message = (value.messages || [])[0] || {};\nconst interactive = message.interactive || {};\nconst buttonId =\n  interactive.button_reply?.id ||\n  interactive.list_reply?.id ||\n  null;\n\nconst text =\n  message.text?.body ||\n  (typeof message.text === 'string' ? message.text : null) ||\n  null;\n\nconst mediaId =\n  message.audio?.id ||\n  message.voice?.id ||\n  null;\n\nconst interactiveReply = buttonId ? String(buttonId).toUpperCase() : null;\n\nlet route = 'TEXT';\nif (interactiveReply === 'CREATE') route = 'CREATE';\nelse if (interactiveReply === 'CANCEL') route = 'CANCEL';\nelse if (interactiveReply === 'EDIT') route = 'EDIT';\nelse if (interactiveReply) route = 'OTHER_BUTTON';\nelse if ((message.type === 'audio' || message.type === 'voice') && mediaId) route = 'AUDIO';\n\nreturn [{\n  json: {\n    sender_phone: message.from || null,\n    message_id: message.id || null,\n    message_type: message.type || null,\n    text,\n    media_id: mediaId,\n    timestamp: message.timestamp || null,\n    interactive_reply: interactiveReply,\n    route,\n  },\n}];\n"
+        "jsCode": "const msg = $input.first().json;\n\n// n8n WhatsApp Trigger unwraps Meta webhook; also support raw entry[0].changes[0].value\nconst value =\n  msg.messages || msg.contacts || msg.metadata\n    ? msg\n    : msg.entry?.[0]?.changes?.[0]?.value || msg;\n\nconst messagesRaw = value.messages || msg.messages || [];\nconst message = Array.isArray(messagesRaw)\n  ? (messagesRaw[0] || {})\n  : (messagesRaw || {});\n\n// Some n8n versions put message fields on the item root\nconst root = (!message.id && (msg.type || msg.from || msg.interactive)) ? msg : message;\n\nconst interactive = root.interactive || message.interactive || msg.interactive || {};\nlet buttonId =\n  interactive.button_reply?.id ||\n  interactive.list_reply?.id ||\n  interactive.button_reply?.title ||\n  root.button_reply?.id ||\n  message.button_reply?.id ||\n  msg.button_reply?.id ||\n  root.button?.payload ||\n  null;\n\nlet text =\n  root.text?.body ||\n  message.text?.body ||\n  (typeof root.text === 'string' ? root.text : null) ||\n  (typeof message.text === 'string' ? message.text : null) ||\n  null;\n\nconst mediaId =\n  root.audio?.id ||\n  message.audio?.id ||\n  root.voice?.id ||\n  message.voice?.id ||\n  null;\n\nconst textUpper = String(text || '').trim().toUpperCase();\nlet interactiveReply = buttonId ? String(buttonId).trim().toUpperCase() : null;\n\n// Fallback: plain text CREATE/CANCEL/EDIT (some clients / trigger shapes)\nif (!interactiveReply && ['CREATE', 'CANCEL', 'EDIT'].includes(textUpper)) {\n  interactiveReply = textUpper;\n  text = null;\n}\n\n// Fallback: type interactive/button but id only in title\nif (!interactiveReply && (root.type === 'interactive' || root.type === 'button' || message.type === 'interactive')) {\n  const title = (\n    interactive.button_reply?.title ||\n    interactive.list_reply?.title ||\n    root.button?.text ||\n    ''\n  ).toString().trim().toUpperCase();\n  if (['CREATE', 'CANCEL', 'EDIT'].includes(title)) interactiveReply = title;\n}\n\nlet route = 'TEXT';\nif (interactiveReply === 'CREATE') route = 'CREATE';\nelse if (interactiveReply === 'CANCEL') route = 'CANCEL';\nelse if (interactiveReply === 'EDIT') route = 'EDIT';\nelse if (interactiveReply) route = 'OTHER_BUTTON';\nelse if ((root.type === 'audio' || root.type === 'voice' || message.type === 'audio' || message.type === 'voice') && mediaId) route = 'AUDIO';\n\nreturn [{\n  json: {\n    sender_phone: root.from || message.from || msg.from || null,\n    message_id: root.id || message.id || msg.id || null,\n    message_type: root.type || message.type || msg.type || null,\n    text,\n    media_id: mediaId,\n    timestamp: root.timestamp || message.timestamp || null,\n    interactive_reply: interactiveReply,\n    route,\n  },\n}];\n"
       },
       "id": "normalize",
       "name": "Normalize Incoming Message",
@@ -87,7 +87,8 @@
       "position": [
         900,
         180
-      ]
+      ],
+      "onError": "continueErrorOutput"
     },
     {
       "parameters": {
@@ -116,7 +117,8 @@
       "position": [
         1120,
         180
-      ]
+      ],
+      "onError": "continueErrorOutput"
     },
     {
       "parameters": {
@@ -198,6 +200,7 @@
         1560,
         280
       ],
+      "onError": "continueErrorOutput",
       "notes": "n8n WhatsApp node cannot send reply buttons. Uses Meta Graph API interactive buttons. Credential: WhatsApp Business Cloud API (same Access Token)."
     },
     {
@@ -291,7 +294,8 @@
       "position": [
         1120,
         360
-      ]
+      ],
+      "onError": "continueErrorOutput"
     },
     {
       "parameters": {
@@ -317,7 +321,8 @@
       "position": [
         1120,
         520
-      ]
+      ],
+      "onError": "continueErrorOutput"
     },
     {
       "parameters": {
@@ -346,7 +351,8 @@
       "position": [
         1340,
         360
-      ]
+      ],
+      "onError": "continueErrorOutput"
     },
     {
       "parameters": {
@@ -375,7 +381,8 @@
       "position": [
         1340,
         520
-      ]
+      ],
+      "onError": "continueErrorOutput"
     },
     {
       "parameters": {
@@ -476,7 +483,8 @@
         1120,
         520
       ],
-      "notes": "STT only: returns {ok,text,provider}. Transcript is merged back into n8n text flow (Extract \u2192 Draft). Requires valid WHATSAPP_ACCESS_TOKEN in backend/.env to download media."
+      "onError": "continueErrorOutput",
+      "notes": "STT only: returns {ok,text,provider}. Transcript is merged back into n8n text flow (Extract → Draft). Requires valid WHATSAPP_ACCESS_TOKEN in backend/.env to download media."
     },
     {
       "parameters": {
@@ -514,20 +522,24 @@
     },
     {
       "parameters": {
-        "jsCode": "return [{ json: { status: 'ignored', reason: 'empty_or_unsupported_message', message_type: $json.message_type, route: $json.route } }];"
+        "operation": "send",
+        "phoneNumberId": "1256431730893371",
+        "recipientPhoneNumber": "={{ $('Normalize Incoming Message').item.json.sender_phone }}",
+        "textBody": "Could not process that message. Please type trip details, or tap CREATE / CANCEL on the draft."
       },
-      "id": "ignore-empty",
-      "name": "Ignore Empty/Unsupported",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
+      "id": "send-unsupported",
+      "name": "Send Unsupported",
+      "type": "n8n-nodes-base.whatsApp",
+      "typeVersion": 1,
       "position": [
         1340,
         420
-      ]
+      ],
+      "notes": "Replaces silent Ignore Empty — never leave user without a reply."
     },
     {
       "parameters": {
-        "jsCode": "const norm = $('Normalize Incoming Message').item.json;\nconst stt = $input.first().json || {};\nconst text = (stt.text || '').trim() || null;\nreturn [{\n  json: {\n    sender_phone: norm.sender_phone,\n    message_id: norm.message_id,\n    message_type: norm.message_type,\n    media_id: norm.media_id,\n    timestamp: norm.timestamp,\n    interactive_reply: norm.interactive_reply,\n    text,\n    stt_ok: !!stt.ok,\n    stt_provider: stt.provider || null,\n    stt_error: stt.error || null,\n    route: text ? 'TEXT' : 'AUDIO_FAILED',\n  },\n}];\n"
+        "jsCode": "const norm = $('Normalize Incoming Message').item.json;\nconst stt = $input.first().json || {};\nconst text = (stt.text || '').trim() || null;\nconst sttError = stt.error || null;\nconst tokenish =\n  String(sttError || '').includes('media_download_unauthorized') ||\n  String(sttError || '').includes('token_expired');\nconst user_error_text = tokenish\n  ? 'Voice processing unavailable right now. Please type the trip details.'\n  : 'Could not understand the voice note. Please type the trip details.';\nreturn [{\n  json: {\n    sender_phone: norm.sender_phone,\n    message_id: norm.message_id,\n    message_type: norm.message_type,\n    media_id: norm.media_id,\n    timestamp: norm.timestamp,\n    interactive_reply: norm.interactive_reply,\n    text,\n    stt_ok: !!stt.ok,\n    stt_provider: stt.provider || null,\n    stt_error: sttError,\n    user_error_text,\n    route: text ? 'TEXT' : 'AUDIO_FAILED',\n  },\n}];\n"
       },
       "id": "merge-transcript",
       "name": "Merge Transcript into Flow",
@@ -543,7 +555,7 @@
         "operation": "send",
         "phoneNumberId": "1256431730893371",
         "recipientPhoneNumber": "={{ $('Normalize Incoming Message').item.json.sender_phone }}",
-        "textBody": "Voice note samajh nahi aaya. Please trip details type karke bhejein (example: Kal HR55AB1234 Gurgaon se Jaipur, ABC party, freight 42000)."
+        "textBody": "={{ $('Merge Transcript into Flow').item.json.user_error_text }}"
       },
       "id": "send-stt-failed",
       "name": "Send STT Failed",
@@ -554,6 +566,36 @@
         620
       ],
       "notes": "Credential: WhatsApp Business Cloud API. phoneNumberId may need hardcoding in UI if env empty."
+    },
+    {
+      "parameters": {
+        "jsCode": "const norm = $('Normalize Incoming Message').first().json || {};\nconst item = $input.first();\nconst err = item.json.error || item.json || {};\nconst failedNode =\n  err.node?.name ||\n  err.context?.node?.name ||\n  item.pairedItem?.sourceOverwrite?.node ||\n  ($execution?.error?.node?.name) ||\n  'unknown';\nconst statusCode =\n  err.httpCode ||\n  err.statusCode ||\n  err.context?.httpCode ||\n  err.response?.statusCode ||\n  null;\nconst message = err.message || err.description || '';\nconst bodyText =\n  (typeof err.description === 'string' ? err.description : '') +\n  ' ' +\n  (typeof err.message === 'string' ? err.message : '') +\n  ' ' +\n  JSON.stringify(err).slice(0, 500);\n\nconst MESSAGES = {\n  token_expired: 'WhatsApp access expired. Please try again later.',\n  stt_failed: 'Could not understand the voice note. Please type the trip details.',\n  stt_token: 'Voice processing unavailable right now. Please type the trip details.',\n  api_timeout: 'Service temporarily unavailable. Please retry in a moment.',\n  draft_not_found: 'No open draft found. Please send trip details first.',\n  generic: 'Something went wrong. Please type the trip details and try again.',\n};\n\nconst msg = `${message} ${bodyText}`.toLowerCase();\nconst code = Number(statusCode) || null;\nconst node = String(failedNode || '');\n\nconst looksToken =\n  code === 401 ||\n  code === 403 ||\n  msg.includes('session has expired') ||\n  msg.includes('oauth') ||\n  msg.includes('media_download_unauthorized') ||\n  msg.includes('token_expired') ||\n  msg.includes('unauthorized');\n\nconst looksTimeout =\n  code === 502 ||\n  code === 503 ||\n  code === 504 ||\n  msg.includes('timeout') ||\n  msg.includes('econnrefused') ||\n  msg.includes('enotfound') ||\n  msg.includes('socket hang up');\n\nconst looksDraftMissing =\n  node.startsWith('Resolve Open Draft') &&\n  (code === 404 || msg.includes('no open draft') || msg.includes('not found'));\n\nlet error_code = 'generic';\nif (looksToken) error_code = 'token_expired';\nelse if (looksDraftMissing) error_code = 'draft_not_found';\nelse if (looksTimeout) error_code = 'api_timeout';\n\nreturn [{\n  json: {\n    sender_phone: norm.sender_phone || null,\n    failed_node: node,\n    error_code,\n    text_body: MESSAGES[error_code] || MESSAGES.generic,\n    debug: { statusCode: code, message: String(message).slice(0, 300) },\n  },\n}];\n"
+      },
+      "id": "build-error-message",
+      "name": "Build Error Message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1900,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "send",
+        "phoneNumberId": "1256431730893371",
+        "recipientPhoneNumber": "={{ $json.sender_phone }}",
+        "textBody": "={{ $json.text_body }}"
+      },
+      "id": "send-error-to-user",
+      "name": "Send Error to User",
+      "type": "n8n-nodes-base.whatsApp",
+      "typeVersion": 1,
+      "position": [
+        2120,
+        300
+      ],
+      "notes": "Terminal error notify. Do NOT enable continueOnFail / onError."
     },
     {
       "parameters": {
@@ -588,6 +630,23 @@
         1560,
         520
       ]
+    },
+    {
+      "parameters": {
+        "operation": "send",
+        "phoneNumberId": "1256431730893371",
+        "recipientPhoneNumber": "={{ $('Normalize Incoming Message').item.json.sender_phone }}",
+        "textBody": "To edit, send the corrected trip details as text (example: freight 42000). Then tap CREATE when the new draft looks right."
+      },
+      "id": "send-edit-hint",
+      "name": "Send Edit Hint",
+      "type": "n8n-nodes-base.whatsApp",
+      "typeVersion": 1,
+      "position": [
+        1120,
+        620
+      ],
+      "notes": "Switch fallback for EDIT / OTHER_BUTTON — was previously unconnected (silent)."
     }
   ],
   "connections": {
@@ -639,6 +698,13 @@
             "type": "main",
             "index": 0
           }
+        ],
+        [
+          {
+            "node": "Build Error Message",
+            "type": "main",
+            "index": 0
+          }
         ]
       ]
     },
@@ -647,6 +713,13 @@
         [
           {
             "node": "IF Missing Info",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Error Message",
             "type": "main",
             "index": 0
           }
@@ -671,6 +744,18 @@
         ]
       ]
     },
+    "Send Confirmation Buttons": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Build Error Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
     "Route CREATE/CANCEL": {
       "main": [
         [
@@ -686,6 +771,13 @@
             "type": "main",
             "index": 0
           }
+        ],
+        [
+          {
+            "node": "Send Edit Hint",
+            "type": "main",
+            "index": 0
+          }
         ]
       ]
     },
@@ -694,6 +786,13 @@
         [
           {
             "node": "Confirm Draft",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Error Message",
             "type": "main",
             "index": 0
           }
@@ -708,6 +807,13 @@
             "type": "main",
             "index": 0
           }
+        ],
+        [
+          {
+            "node": "Build Error Message",
+            "type": "main",
+            "index": 0
+          }
         ]
       ]
     },
@@ -719,6 +825,13 @@
             "type": "main",
             "index": 0
           }
+        ],
+        [
+          {
+            "node": "Build Error Message",
+            "type": "main",
+            "index": 0
+          }
         ]
       ]
     },
@@ -727,6 +840,13 @@
         [
           {
             "node": "Send Cancelled",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Error Message",
             "type": "main",
             "index": 0
           }
@@ -762,7 +882,7 @@
         ],
         [
           {
-            "node": "Ignore Empty/Unsupported",
+            "node": "Send Unsupported",
             "type": "main",
             "index": 0
           }
@@ -774,6 +894,13 @@
         [
           {
             "node": "Merge Transcript into Flow",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Error Message",
             "type": "main",
             "index": 0
           }
@@ -808,9 +935,20 @@
           }
         ]
       ]
+    },
+    "Build Error Message": {
+      "main": [
+        [
+          {
+            "node": "Send Error to User",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "meta": {
-    "description": "Voice: Normalize\u2192IF Audio\u2192POST /v1/stt/whatsapp-media\u2192Merge transcript\u2192Extract\u2192Draft (n8n sends replies). Base: https://49b2-103-248-87-67.ngrok-free.app. backend/.env WHATSAPP_ACCESS_TOKEN must be valid for media download."
+    "description": "Voice: Normalize→IF Audio→POST /v1/stt/whatsapp-media→Merge transcript→Extract→Draft (n8n sends replies). Base: https://49b2-103-248-87-67.ngrok-free.app. backend/.env WHATSAPP_ACCESS_TOKEN must be valid for media download."
   }
 }

@@ -4,6 +4,7 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from app.validators import (
+    coerce_pickup_year,
     compute_missing_fields,
     format_confirmation_summary,
     format_display_date,
@@ -45,12 +46,48 @@ def test_resolve_kal_date():
     assert clarification is None
 
 
-def test_format_display_date_dd_mm_yy():
-    assert format_display_date("2026-08-29") == "29/08/26"
-    assert format_display_date("2023-10-24") == "24/10/23"
+def test_resolve_date_without_year_uses_current_year():
+    """Day/month only (no year spoken) → reference year, not a stale LLM year."""
+    ref = datetime(2026, 8, 29, 10, 0, tzinfo=ZoneInfo("Asia/Kolkata"))
+    iso, clarification = resolve_relative_date(
+        "30 October", timezone="Asia/Kolkata", reference=ref
+    )
+    assert clarification is None
+    assert iso == "2026-10-30"
+
+    # LLM invented 2023 but user never said a year
+    assert (
+        coerce_pickup_year(
+            "2023-10-30",
+            phrase="tees October morning Gurgaon se Hyderabad",
+            timezone="Asia/Kolkata",
+            reference=ref,
+        )
+        == "2026-10-30"
+    )
 
 
-def test_confirmation_summary_uses_dd_mm_yy():
+def test_resolve_date_keeps_explicit_year():
+    ref = datetime(2026, 8, 29, 10, 0, tzinfo=ZoneInfo("Asia/Kolkata"))
+    iso, _ = resolve_relative_date("30/10/2025", timezone="Asia/Kolkata", reference=ref)
+    assert iso == "2025-10-30"
+    assert (
+        coerce_pickup_year(
+            "2025-10-30",
+            phrase="pickup 30 October 2025",
+            timezone="Asia/Kolkata",
+            reference=ref,
+        )
+        == "2025-10-30"
+    )
+
+
+def test_format_display_date_dd_mm_yyyy():
+    assert format_display_date("2026-08-29") == "29/08/2026"
+    assert format_display_date("2023-10-24") == "24/10/2023"
+
+
+def test_confirmation_summary_uses_dd_mm_yyyy():
     summary = format_confirmation_summary(
         9,
         {
@@ -64,7 +101,7 @@ def test_confirmation_summary_uses_dd_mm_yy():
             "driver_name": "Rakesh",
         },
     )
-    assert "Pickup: 29/08/26," in summary
+    assert "Pickup: 29/08/2026," in summary
     assert "2026-08-29" not in summary
 
 

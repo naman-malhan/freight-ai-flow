@@ -40,6 +40,8 @@ Rules:
 - Never invent origin/destination if not stated.
 - If freight is ambiguous like "42" without unit, set clarification_needed asking if it means Rs 42 or Rs 42k.
 - Relative dates like kal/aaj go in pickup_date_raw, not pickup_date.
+- If a calendar date has day/month but NO year spoken, set pickup_date using the Reference date's year (never invent 2023/2024/etc).
+- Only use a non-reference year in pickup_date when the user explicitly said that year (e.g. 2025, 30/10/25).
 - intent=unknown for non trip-creation messages like truck location queries.
 """
 
